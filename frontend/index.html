@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Traduz AI — tradutor de livros</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>Traduz AI</h1>
+    <p class="subtitle">Traduza seus livros (EN → PT-BR) mantendo o layout, usando seu modelo local.</p>
+
+    <form id="upload-form">
+      <label id="dropzone" for="file-input">
+        <span id="dropzone-text">Arraste um arquivo aqui ou clique para escolher (.pdf, .epub, .txt)</span>
+      </label>
+      <input id="file-input" type="file" accept=".pdf,.epub,.txt" hidden />
+
+      <div class="field">
+        <label for="output-format">Formato de saída</label>
+        <select id="output-format">
+          <option value="">Mesmo formato do original</option>
+          <option value="txt">.txt</option>
+          <option value="epub">.epub</option>
+          <option value="pdf">.pdf</option>
+        </select>
+        <p class="hint">
+          Trocar de formato (ex: epub → pdf) requer o Calibre instalado (<code>ebook-convert</code>) na máquina do servidor.
+        </p>
+      </div>
+
+      <button id="submit-btn" type="submit" disabled>Traduzir</button>
+    </form>
+
+    <section id="status-section" hidden>
+      <p id="status-text">Enviando…</p>
+      <div class="progress-bar">
+        <div id="progress-fill" class="progress-fill"></div>
+      </div>
+      <p id="progress-text" class="hint"></p>
+      <p id="warning-text" class="warning" hidden></p>
+      <a id="download-link" class="button" hidden download>Baixar arquivo traduzido</a>
+    </section>
+
+    <p id="error-text" class="error" hidden></p>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
