@@ -6,8 +6,8 @@ um agente de IA retomando o trabalho). Ela documenta **como o sistema é constru
 
 ## Índice
 
-1. [architecture.md](./architecture.md) — visão geral do sistema, componentes, stack, layout de diretórios.
-2. [translation-pipeline.md](./translation-pipeline.md) — fluxo ponta a ponta (upload → extração → tradução → reconstrução → download), diagrama de sequência e máquina de estados do job.
+1. [architecture.md](./architecture.md) — visão geral do sistema, componentes, stack, persistência SQLite (`db.py`), layout de diretórios.
+2. [translation-pipeline.md](./translation-pipeline.md) — fluxo ponta a ponta (upload → extração → tradução → reconstrução → download), retomada automática após crash, diagrama de sequência e máquina de estados do job.
 3. [pdf-extraction.md](./pdf-extraction.md) — o algoritmo de extração/tradução/reinserção de PDF em detalhe. É a parte mais complexa do sistema; documenta 5 bugs não-óbvios do PyMuPDF já descobertos e corrigidos, para não serem reintroduzidos.
 4. [epub-extraction.md](./epub-extraction.md) — abordagem de extração/reinserção de EPUB.
 5. [testing.md](./testing.md) — estratégia de testes automatizados, como rodar, mapa de cobertura por módulo.

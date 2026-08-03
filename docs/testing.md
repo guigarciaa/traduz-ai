@@ -1,7 +1,7 @@
 # Testes Automatizados
 
 Suíte em `backend/tests/`, usando `pytest` + `pytest-asyncio` + `pytest-cov` + `respx` (mock de
-HTTP para o `llama-server`, sem precisar de um modelo real rodando). **102 testes, 100% de
+HTTP para o `llama-server`, sem precisar de um modelo real rodando). **147 testes, 100% de
 cobertura de linha** em `backend/app/` no momento em que isto foi escrito.
 
 ## Como rodar
@@ -28,11 +28,13 @@ Para ver linhas específicas não cobertas: `pytest --cov-report=html` gera `htm
 |---|---|---|
 | `extractors/txt.py` | `test_txt.py` | Split de parágrafos por linha em branco, rebuild, edge cases de whitespace. |
 | `extractors/epub.py` | `test_epub.py` | Extração de blocos (p/h1/li/td...), skip de `nav.xhtml`, skip de blocos com `img`/`table`, blocos aninhados, achatamento de formatação inline, rebuild preservando estrutura/imagens/nav. |
-| `extractors/pdf.py` | `test_pdf.py` | O mais extenso (40+ casos) — ver seção dedicada abaixo. |
-| `llm.py` | `test_llm.py` | Sucesso, retry com backoff, esgotamento de tentativas, resposta malformada, ordem preservada sob concorrência, callback de progresso, skip de texto vazio. Todo HTTP é mockado via `respx` contra `settings.llama_server_url` — nenhum teste depende de um `llama-server` real rodando. |
-| `jobs.py` | `test_jobs.py` | Detecção de formato, `create_job`, todos os ramos de `run_job` (mesmo formato / saída txt / conversão via Calibre disponível/indisponível / exceção → status error), `_convert_with_calibre` (sucesso/falha/timeout/ausente), `start_job` agendando a task em background. |
-| `main.py` | `test_main.py` | As 3 rotas via `fastapi.testclient.TestClient`, incluindo códigos de erro (400/404/409) e o frontend estático sendo servido. |
+| `extractors/pdf.py` | `test_pdf.py` | O mais extenso (50+ casos) — ver seção dedicada abaixo, incluindo `_sample_background_color` (amostragem de cor de fundo para a redação). |
+| `llm.py` | `test_llm.py` | Sucesso, retry com backoff, esgotamento de tentativas, resposta malformada, ordem preservada sob concorrência, callback agregado `on_progress` e callback por item `on_item_done` (síncrono e assíncrono), skip de texto vazio. Todo HTTP é mockado via `respx` contra `settings.llama_server_url` — nenhum teste depende de um `llama-server` real rodando. |
+| `db.py` | `test_db.py` | Roundtrip de `save_job`/`load_all_jobs`, recomputo de progresso a partir de `job_units`, idempotência de `save_job_units` (retomada), cache de tradução (miss/hit/overwrite, compartilhado entre jobs), `hash_text` determinístico. |
+| `jobs.py` | `test_jobs.py` | Detecção de formato, `create_job`, todos os ramos de `run_job` (mesmo formato / saída txt / conversão via Calibre disponível/indisponível / exceção → status error), retomada de tradução parcial sem rechamar o LLM, uso do cache global, `cancel_job` (cancelamento real de uma task em andamento), `list_jobs`, `load_jobs_from_db` (retomada automática, jobs terminais ignorados, guarda de `MAX_RESUME_ATTEMPTS`), `start_job` não duplicando task para o mesmo job. |
+| `main.py` | `test_main.py` | Todas as rotas via `fastapi.testclient.TestClient` (incluindo `GET /api/jobs` e `POST /api/jobs/{id}/cancel`), códigos de erro (400/404/409), o `lifespan` de startup chamando `db.init_db()`/`jobs.load_jobs_from_db()`, e o frontend estático sendo servido. |
 | `config.py` | (coberto indiretamente) | `Settings` é exercitado pelos testes de `llm.py`/`jobs.py` que leem seus valores; não tem lógica própria que justifique testes dedicados. |
+| `models.py` | (coberto indiretamente) | `Job` é um dataclass simples, sem lógica própria; exercitado por todos os testes de `jobs.py`/`db.py`/`main.py`. |
 
 ## Testando o pipeline de PDF (o mais delicado)
 
@@ -81,18 +83,28 @@ específico**, em vez de só validar "roda sem erro":
   passaria silenciosamente sem testar nada (o `_obstacles` ficaria vazio). Ver
   `test_load_and_rebuild_preserve_image_obstacles`.
 
-## Isolamento de estado (`jobs.py` e `main.py`)
+## Isolamento de estado (`db.py`, `jobs.py` e `main.py`)
 
-`jobs.JOBS` é um dict global em memória e `jobs.DATA_DIR` aponta pra pasta real do projeto — sem
-cuidado, os testes escreveriam em `data/jobs/` de verdade e vazariam `Job`s entre testes. Os dois
-arquivos de teste que tocam `jobs.py` (`test_jobs.py`, `test_main.py`) têm uma fixture
-`autouse=True` que faz `monkeypatch.setattr(jobs_module, "DATA_DIR", tmp_path)` e limpa
-`jobs_module.JOBS` antes/depois de cada teste. Qualquer teste novo que chame `create_job`/`run_job`
-deve estar em um arquivo com essa fixture (ou repetir o padrão).
+Três fontes de estado global que testes precisam isolar, ou correm o risco de escrever nos
+arquivos reais do projeto e/ou vazar estado entre testes:
 
-`test_jobs.py` e `test_main.py` também nunca deixam `run_job`/`translate_many` fazer uma chamada
-HTTP de verdade: sempre monkeypatcham `jobs_module.translate_many` (ou, nos testes de API,
-`jobs_module.start_job` inteiro) por uma função fake determinística.
+- **`db.DB_PATH`** aponta para `data/traduz.db` por padrão. Uma fixture `autouse=True` em
+  `conftest.py` (`_isolated_db`) monkeypatcha `db.DB_PATH` para um arquivo dentro de `tmp_path` e
+  chama `db.init_db()` **antes de todo teste do projeto**, não só nos que tocam `db.py`
+  diretamente — necessário porque `jobs.create_job()` chama `db.save_job()` incondicionalmente.
+- **`jobs.JOBS`** (dict de jobs em memória) e **`jobs.RUNNING_TASKS`** (dict de tasks em
+  andamento, para cancelamento) são globais que vazam entre testes se não forem limpos. Os dois
+  arquivos que tocam `jobs.py` (`test_jobs.py`, `test_main.py`) têm uma fixture `autouse=True`
+  que limpa ambos antes/depois de cada teste, e que também monkeypatcha `jobs.DATA_DIR` para
+  `tmp_path` (nunca escrever em `data/jobs/` de verdade).
+- **`jobs.translate_many`** nunca deve fazer uma chamada HTTP de verdade em testes de
+  `jobs.py`/`main.py`: a fixture `fake_translate_many` (em `test_jobs.py`) reproduz o mesmo
+  contrato de `llm.translate_many` (incluindo `on_item_done`, já que `run_job` depende dele para
+  persistir cada tradução — um fake que só implementasse `on_progress` quebraria a retomada/cache
+  silenciosamente, sem lançar erro).
+
+Qualquer teste novo que chame `create_job`/`run_job`/`cancel_job`/`list_jobs`/`load_jobs_from_db`
+deve estar em um arquivo com essas fixtures (ou repetir o padrão).
 
 ## O que não está coberto por design
 
@@ -106,3 +118,12 @@ HTTP de verdade: sempre monkeypatcham `jobs_module.translate_many` (ou, nos test
   em si não tem cobertura de integração real.
 - **Não há teste de carga/performance** (tempo de tradução de um livro inteiro, uso de memória em
   PDFs de centenas de páginas).
+- **Não há teste de escrita SQLite verdadeiramente concorrente** (múltiplos `asyncio.Task`
+  diferentes escrevendo no mesmo `data/traduz.db` ao mesmo tempo, sob carga). Os testes de
+  `db.py` rodam sequencialmente dentro de um único teste; o comportamento de `WAL` +
+  `busy_timeout` sob contenção real não é exercitado automaticamente.
+- **A retomada automática no startup (`load_jobs_from_db` chamando `start_job`) é testada
+  diretamente em `test_jobs.py`, mas não fim a fim via um restart de processo real** — o teste
+  simula o "job preso em `translating`" gravando o status manualmente no DB, não matando e
+  reiniciando um processo `uvicorn` de verdade. A validação manual (ver o `## Verificação` do
+  plano em `docs/known-limitations.md`/histórico do projeto) cobre esse caso.

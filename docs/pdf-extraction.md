@@ -195,15 +195,41 @@ known-limitations.md.
 
 ## Redação (apagar o texto original)
 
-`rebuild()` primeiro adiciona uma anotação de redação (`add_redact_annot`, preenchimento branco
-`(1,1,1)`) em **todos** os blocos de texto de uma vez, depois aplica (`apply_redactions()`) por
-página. Isso efetivamente remove o conteúdo de texto original do stream do PDF (não é só "pintar
-por cima" — `apply_redactions` de fato deleta os operadores de desenho de texto na região). Duas
-implicações:
+`rebuild()` primeiro adiciona uma anotação de redação (`add_redact_annot`) em **todos** os blocos
+de texto de uma vez, depois aplica (`apply_redactions()`) por página. Isso efetivamente remove o
+conteúdo de texto original do stream do PDF (não é só "pintar por cima" — `apply_redactions` de
+fato deleta os operadores de desenho de texto na região). Imagens e vetores (`type != 0`) nunca
+são tocados pela redação — só bboxes de blocos de texto.
 
-- O preenchimento é sempre branco `(1,1,1)`. Se a página tiver fundo colorido/texturizado atrás do
-  texto (incomum em livros, mas existe em alguns designs), a região redigida vai destoar.
-- Imagens e vetores (`type != 0`) nunca são tocados pela redação — só bboxes de blocos de texto.
+### Cor de preenchimento: amostrada do fundo, não branco fixo
+
+A cor usada em `fill=` vem de `_sample_background_color(page, rect)`, chamada **antes** da
+redação (depois que a região já foi apagada, os pixels ali já *são* a cor de preenchimento —
+amostrar depois seria circular). Renderiza só aquela região (mais uma margem de 2pt) em baixa
+resolução via `page.get_pixmap(clip=..., matrix=fitz.Matrix(0.5, 0.5))` e usa a **cor mais
+frequente** entre os pixels amostrados (`collections.Counter`), não a média.
+
+**Por que moda e não média**: a média seria puxada pelos pixels escuros do próprio texto — mesmo
+cobrindo uma minoria da área, eles arrastam a média inteira em direção ao cinza/preto. A moda
+reflete o que cobre a maior parte da área, que normalmente é o fundo. Confirmado empiricamente:
+num bloco de texto preto sobre fundo dourado, a moda pegou o dourado (a cor correta) enquanto uma
+média teria dado um tom acinzentado que não corresponde a nada na página real.
+
+**Por que quantizar antes de contar**: cores são arredondadas para o múltiplo de 16 mais próximo
+por canal antes de entrar no `Counter`. Sem isso, um fundo com textura sutil ou gradiente (muitos
+pixels parecidos mas não bit-a-bit idênticos, incluindo os pixels de anti-aliasing nas bordas dos
+glifos) faria a votação se espalhar entre várias cores quase-iguais, e a moda escolheria um valor
+minoritário arbitrário em vez de uma cor representativa.
+
+**Fallback para branco** (`(1.0, 1.0, 1.0)`) em qualquer caso degenerado: o retângulo amostrado
+cai fora da página (`clip.is_empty`), a chamada a `get_pixmap` lança exceção, ou o pixmap resultante
+não tem pixels para contar.
+
+**Limitação aceita, não corrigida**: se um título grande em negrito ocupa a maioria da área
+amostrada (mais área de tinta do que de fundo), a moda pode pegar a cor do texto em vez do fundo.
+Mitigação futura possível: amostrar só uma faixa fina na borda do bbox em vez da área inteira
+(bordas têm mais chance de ser só fundo). Não implementado — não apareceu no livro de teste usado
+durante o desenvolvimento.
 
 ## Resumo das constantes ajustáveis
 
@@ -215,3 +241,5 @@ implicações:
 | margem de segurança em `_insert_with_shrink` | `max(4.0, altura*0.08)` | Quão conservador é o critério de "cabe de verdade". Menor = mais fiel ao tamanho de fonte original, mas mais arriscado de reproduzir o bug 5. |
 | margem antes do próximo bloco (`max_y - 4`) | `4`pt | Colchão de segurança contra o próximo bloco/imagem. |
 | margem antes do fim da página (`page.rect.height - 18`) | `18`pt | Colchão de segurança contra a borda da página. |
+| padding em `_sample_background_color` | `2`pt | Margem extra ao redor do bloco antes de amostrar o fundo. |
+| quantização de cor em `_sample_background_color` | múltiplo de `16` | Agrupa pixels quase-idênticos antes de contar a moda. Menor = mais preciso mas mais sensível a texturas/gradientes; maior = mais robusto mas menos fiel a fundos com várias cores próximas reais. |
