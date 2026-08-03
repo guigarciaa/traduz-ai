@@ -24,6 +24,12 @@ Trocar o **formato de saída** (ex.: enviar `.epub` e baixar `.pdf`) usa o
 no sistema. Sem o Calibre, o job termina com um aviso e entrega o arquivo
 traduzido no formato original.
 
+Jobs são persistidos em SQLite (`data/traduz.db`): se o backend cair ou for
+reiniciado no meio de uma tradução longa, ele retoma sozinho de onde parou ao
+subir de novo, sem retraduzir o que já foi feito. Trechos de texto repetidos
+(cabeçalhos, rodapés, ou texto idêntico em livros diferentes) são traduzidos
+uma vez só e reaproveitados de um cache global.
+
 ## Requisitos
 
 - Python 3.11+ **com suporte a SSL** (o Python do pyenv neste ambiente foi
@@ -66,7 +72,18 @@ uvicorn app.main:app --reload --port 8899
 
 Abra `http://localhost:8899` no navegador, envie o arquivo, escolha o formato
 de saída (ou deixe "mesmo formato do original") e acompanhe o progresso na
-barra. Quando terminar, o link de download aparece na página.
+barra. Um botão "Cancelar" fica disponível enquanto o job está em andamento.
+Quando terminar, o link de download aparece na página.
+
+### API
+
+| Rota | Descrição |
+|---|---|
+| `POST /api/jobs` | Envia um arquivo (`file`, `output_format` opcional) e inicia a tradução. |
+| `GET /api/jobs` | Lista todos os jobs (mais recentes primeiro). |
+| `GET /api/jobs/{id}` | Status e progresso de um job. |
+| `POST /api/jobs/{id}/cancel` | Cancela um job em andamento. |
+| `GET /api/jobs/{id}/download` | Baixa o resultado de um job concluído. |
 
 ## Testes
 
@@ -97,4 +114,7 @@ principalmente em `backend/app/extractors/pdf.py`.
 - Links/hiperlinks dentro do corpo do texto (não no sumário) são convertidos
   em texto plano ao traduzir o bloco que os contém.
 - Tradução é feita localmente, parágrafo por parágrafo — livros grandes podem
-  levar bastante tempo dependendo do hardware e do modelo usado.
+  levar bastante tempo dependendo do hardware e do modelo usado. Interromper
+  e retomar não perde progresso (ver acima), mas não acelera a tradução em si.
+
+Lista completa e mais detalhada em [docs/known-limitations.md](docs/known-limitations.md).

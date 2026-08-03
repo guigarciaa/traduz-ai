@@ -3,6 +3,17 @@ import fitz
 import pytest
 from ebooklib import epub
 
+from app import db
+
+
+@pytest.fixture(autouse=True)
+def _isolated_db(tmp_path, monkeypatch):
+    """Every test gets its own throwaway SQLite file - never the real
+    project DB. Autouse + session-wide (conftest.py) since db.save_job() is
+    called from jobs.create_job(), which many tests touch indirectly."""
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
 
 @pytest.fixture
 def make_epub(tmp_path):

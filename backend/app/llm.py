@@ -61,11 +61,15 @@ async def translate_text(client: httpx.AsyncClient, text: str) -> str:
     )
 
 
-async def translate_many(texts: list[str], on_progress=None) -> list[str]:
+async def translate_many(texts: list[str], on_progress=None, on_item_done=None) -> list[str]:
     """Translate a list of text chunks respecting configured concurrency.
 
     Order of results matches order of input. `on_progress(done, total)` is
-    called after each chunk finishes.
+    called after each chunk finishes. `on_item_done(index, translated_text)`,
+    if given, is called right when that item's result is known - sync or
+    async (awaited if it returns a coroutine). This module has no idea what
+    the caller does with it (jobs.py uses it to persist progress and feed a
+    translation cache); llm.py stays free of DB/cache concerns.
     """
     results: list[str | None] = [None] * len(texts)
     total = len(texts)
@@ -77,8 +81,13 @@ async def translate_many(texts: list[str], on_progress=None) -> list[str]:
         async def worker(index: int, chunk: str):
             nonlocal done
             async with semaphore:
-                results[index] = await translate_text(client, chunk)
+                translated = await translate_text(client, chunk)
+            results[index] = translated
             done += 1
+            if on_item_done:
+                maybe_awaitable = on_item_done(index, translated)
+                if asyncio.iscoroutine(maybe_awaitable):
+                    await maybe_awaitable
             if on_progress:
                 on_progress(done, total)
 

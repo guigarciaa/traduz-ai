@@ -1,15 +1,24 @@
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import jobs
+from . import db, jobs
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="Traduz AI")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.init_db()
+    jobs.load_jobs_from_db()
+    yield
+
+
+app = FastAPI(title="Traduz AI", lifespan=lifespan)
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
@@ -30,11 +39,28 @@ async def create_job(file: UploadFile = File(...), output_format: str | None = F
     return _job_to_dict(job)
 
 
+@app.get("/api/jobs")
+async def list_jobs():
+    return [_job_to_dict(job) for job in jobs.list_jobs()]
+
+
 @app.get("/api/jobs/{job_id}")
 async def get_job(job_id: str):
     job = jobs.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job não encontrado.")
+    return _job_to_dict(job)
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    job = jobs.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job não encontrado.")
+    if job.status in jobs.TERMINAL_STATUSES:
+        raise HTTPException(status_code=409, detail=f"Job já está em estado final ({job.status}).")
+
+    jobs.cancel_job(job_id)
     return _job_to_dict(job)
 
 
@@ -62,6 +88,8 @@ def _job_to_dict(job: jobs.Job) -> dict:
         "progress_total": job.progress_total,
         "error_message": job.error_message,
         "warning_message": job.warning_message,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
     }
 
 

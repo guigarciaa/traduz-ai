@@ -86,6 +86,14 @@ select {
 
 .hint { font-size: 0.8rem; color: var(--muted); margin: 6px 0 0; }
 
+/* Without this, the [hidden] attribute on a `.button`-classed element (or
+   any element with its own `display` rule) is silently ignored: author
+   styles always win over the browser's default `[hidden] { display: none }`
+   rule regardless of selector specificity, so buttons kept "hidden" via JS
+   would stay visible. Confirmed in a real browser: the cancel/download
+   buttons stayed on screen after their job reached a terminal status. */
+[hidden] { display: none !important; }
+
 button, .button {
   display: block;
   width: 100%;
@@ -105,6 +113,13 @@ button, .button {
 
 button:hover:not(:disabled), .button:hover { background: var(--accent-hover); }
 button:disabled { background: var(--border); cursor: not-allowed; }
+
+.button-secondary {
+  background: transparent;
+  color: var(--error);
+  border: 1px solid var(--error);
+}
+.button-secondary:hover:not(:disabled) { background: var(--error); color: white; }
 
 #status-section { margin-top: 24px; }
 #status-text { margin: 0 0 8px; font-weight: 600; }

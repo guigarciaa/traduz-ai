@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 data/jobs/*
 !data/jobs/.gitkeep
+data/traduz.db
+data/traduz.db-*
 
 # User's own books/documents - never versioned
 *.pdf

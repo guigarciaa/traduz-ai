@@ -1,5 +1,5 @@
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 import fitz  # PyMuPDF
 
@@ -71,6 +71,51 @@ def _pick_helvetica_variant(fontname_sample: str) -> str:
     if italic:
         return "heit"
     return "helv"
+
+
+def _sample_background_color(page: "fitz.Page", rect: "fitz.Rect") -> tuple:
+    """The color to redact a text block with, sampled from what's actually
+    behind it - so a block on a colored/textured background doesn't get
+    replaced by a jarring white patch (the previous hardcoded behavior).
+
+    Uses the MODE (most common color), not the mean: the mean would be
+    pulled toward gray by the block's own (usually dark) text pixels, which
+    darken the average even though they cover a minority of the sampled
+    area; the mode reflects whichever color covers the most area, which is
+    the background in the common case. Colors are quantized to the nearest
+    16 per channel before counting - without this, a background with subtle
+    texture or a gradient (many pixels that are close but not bit-identical)
+    would split votes across near-duplicate shades and the mode would pick
+    an arbitrary minority value instead of a representative one.
+
+    Falls back to white if sampling fails for any reason (e.g. the block is
+    right at the page edge and the padded clip has no area).
+    """
+    pad = 2
+    clip = fitz.Rect(rect.x0 - pad, rect.y0 - pad, rect.x1 + pad, rect.y1 + pad) & page.rect
+    if clip.is_empty:
+        return (1.0, 1.0, 1.0)
+
+    try:
+        pix = page.get_pixmap(clip=clip, matrix=fitz.Matrix(0.5, 0.5))
+    except Exception:
+        return (1.0, 1.0, 1.0)
+
+    if pix.width == 0 or pix.height == 0:
+        return (1.0, 1.0, 1.0)
+
+    stride = pix.n  # bytes per pixel (3 for RGB; could include an alpha byte)
+    samples = pix.samples
+    counter: Counter = Counter()
+    for i in range(0, len(samples) - stride + 1, stride):
+        quantized = (samples[i] // 16 * 16, samples[i + 1] // 16 * 16, samples[i + 2] // 16 * 16)
+        counter[quantized] += 1
+
+    if not counter:
+        return (1.0, 1.0, 1.0)
+
+    (r, g, b), _ = counter.most_common(1)[0]
+    return (r / 255, g / 255, b / 255)
 
 
 # PyMuPDF sometimes splits a single visual paragraph into several consecutive
@@ -266,7 +311,10 @@ class PdfDocument:
         for blk in self._blocks:
             page = self.doc[blk["page_index"]]
             rect = fitz.Rect(blk["bbox"])
-            page.add_redact_annot(rect, fill=(1, 1, 1))
+            # Sample the background BEFORE redacting - once the redaction is
+            # applied, the pixels under the rect *are* the fill color.
+            fill = _sample_background_color(page, rect)
+            page.add_redact_annot(rect, fill=fill)
             pages_touched.add(blk["page_index"])
 
         for page_index in pages_touched:

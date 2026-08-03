@@ -5,6 +5,7 @@ from app.extractors.pdf import (
     PdfDocument,
     _merge_touching_blocks,
     _pick_helvetica_variant,
+    _sample_background_color,
     _sanitize_for_pdf_font,
     _should_merge,
     _srgb_int_to_rgb,
@@ -420,3 +421,122 @@ def test_max_y_ignores_obstacle_in_different_column():
     bounds = doc._compute_max_y_bounds()
 
     assert bounds[0] == doc.doc[0].rect.height - 18
+
+
+# ---------------------------------------------------------------------------
+# _sample_background_color: dynamic redaction fill color
+# ---------------------------------------------------------------------------
+
+
+def test_sample_background_color_matches_solid_colored_background():
+    doc = fitz.open()
+    page = doc.new_page()
+    page.draw_rect(page.rect, fill=(0.8, 0.6, 0.2), color=None)
+
+    color = _sample_background_color(page, fitz.Rect(50, 50, 200, 100))
+
+    # Quantized to the nearest 16 per channel: 204->192, 153->144, 51->48.
+    assert color == pytest.approx((192 / 255, 144 / 255, 48 / 255), abs=0.01)
+
+
+def test_sample_background_color_picks_background_over_text_pixels():
+    doc = fitz.open()
+    page = doc.new_page()
+    page.draw_rect(page.rect, fill=(0.8, 0.6, 0.2), color=None)
+    page.insert_text((60, 95), "Some dark text over the background", fontsize=14, color=(0, 0, 0))
+
+    r, g, b = _sample_background_color(page, fitz.Rect(55, 78, 320, 100))
+
+    # Text pixels are a minority of the sampled area - the mode should still
+    # land on the gold background, not be dragged toward black/gray.
+    assert r > 0.5 and g > 0.4 and b < 0.3
+
+
+def test_sample_background_color_defaults_to_white_on_plain_page():
+    doc = fitz.open()
+    page = doc.new_page()  # blank page, no fill = white background
+
+    color = _sample_background_color(page, fitz.Rect(50, 50, 200, 100))
+
+    # Quantization floors to the nearest 16, so pure white (255) lands at
+    # 240, not 255 - still visually indistinguishable from white.
+    assert color == pytest.approx((240 / 255, 240 / 255, 240 / 255), abs=0.01)
+
+
+def test_sample_background_color_falls_back_to_white_when_clip_is_empty():
+    doc = fitz.open()
+    page = doc.new_page()
+
+    # Far outside the page - the padded clip intersected with page.rect is empty.
+    color = _sample_background_color(page, fitz.Rect(10000, 10000, 10001, 10001))
+
+    assert color == (1.0, 1.0, 1.0)
+
+
+class _RaisingPixmapPage:
+    rect = fitz.Rect(0, 0, 600, 800)
+
+    def get_pixmap(self, **kwargs):
+        raise RuntimeError("boom")
+
+
+def test_sample_background_color_falls_back_to_white_on_pixmap_error():
+    color = _sample_background_color(_RaisingPixmapPage(), fitz.Rect(50, 50, 100, 100))
+    assert color == (1.0, 1.0, 1.0)
+
+
+class _ZeroSizePixmap:
+    width = 0
+    height = 0
+    n = 3
+    samples = b""
+
+
+class _ZeroSizePixmapPage:
+    rect = fitz.Rect(0, 0, 600, 800)
+
+    def get_pixmap(self, **kwargs):
+        return _ZeroSizePixmap()
+
+
+def test_sample_background_color_falls_back_to_white_for_zero_size_pixmap():
+    color = _sample_background_color(_ZeroSizePixmapPage(), fitz.Rect(50, 50, 100, 100))
+    assert color == (1.0, 1.0, 1.0)
+
+
+class _EmptySamplesPixmap:
+    width = 5
+    height = 5
+    n = 3
+    samples = b""
+
+
+class _EmptySamplesPixmapPage:
+    rect = fitz.Rect(0, 0, 600, 800)
+
+    def get_pixmap(self, **kwargs):
+        return _EmptySamplesPixmap()
+
+
+def test_sample_background_color_falls_back_to_white_when_no_samples():
+    color = _sample_background_color(_EmptySamplesPixmapPage(), fitz.Rect(50, 50, 100, 100))
+    assert color == (1.0, 1.0, 1.0)
+
+
+def test_rebuild_redaction_blends_with_colored_background(tmp_path):
+    src = fitz.open()
+    page = src.new_page()
+    page.draw_rect(page.rect, fill=(0.8, 0.6, 0.2), color=None)
+    page.insert_text((72, 100), "Hello colored background.", fontsize=12, color=(0, 0, 0))
+    src_path = tmp_path / "colored.pdf"
+    src.save(str(src_path))
+    src.close()
+
+    doc = PdfDocument.load(str(src_path))
+    out_path = tmp_path / "out.pdf"
+    doc.rebuild(["Ola fundo colorido."], str(out_path))
+
+    result = fitz.open(str(out_path))
+    pix = result[0].get_pixmap(clip=fitz.Rect(72, 90, 90, 105))
+    r, g, b = pix.samples[0], pix.samples[1], pix.samples[2]
+    assert not (r > 240 and g > 240 and b > 240)  # no longer a plain white patch

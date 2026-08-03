@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 import respx
@@ -109,8 +111,6 @@ async def test_translate_many_preserves_order_despite_concurrency(monkeypatch):
     monkeypatch.setattr(settings, "translation_concurrency", 4)
 
     def _responder(request):
-        import json
-
         sent = json.loads(request.content)
         original = sent["messages"][1]["content"]
         return httpx.Response(200, json=_chat_response(f"[PT] {original}"))
@@ -151,3 +151,34 @@ async def test_translate_many_skips_http_call_for_blank_entries():
 
     assert results == ["", "traduzido", "   "]
     assert route.call_count == 1
+
+
+@respx.mock
+async def test_translate_many_calls_sync_on_item_done_per_item():
+    def _responder(request):
+        original = json.loads(request.content)["messages"][1]["content"]
+        return httpx.Response(200, json=_chat_response(f"[PT] {original}"))
+
+    respx.post(settings.llama_server_url).mock(side_effect=_responder)
+
+    calls = []
+    results = await translate_many(["a", "b"], on_item_done=lambda i, t: calls.append((i, t)))
+
+    assert sorted(calls) == [(0, "[PT] a"), (1, "[PT] b")]
+    assert results == ["[PT] a", "[PT] b"]
+
+
+@respx.mock
+async def test_translate_many_awaits_async_on_item_done():
+    respx.post(settings.llama_server_url).mock(
+        return_value=httpx.Response(200, json=_chat_response("traduzido"))
+    )
+
+    calls = []
+
+    async def _on_item_done(index, text):
+        calls.append((index, text))
+
+    await translate_many(["a", "b", "c"], on_item_done=_on_item_done)
+
+    assert sorted(calls) == [(0, "traduzido"), (1, "traduzido"), (2, "traduzido")]

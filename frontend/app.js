@@ -11,6 +11,7 @@ const progressFill = document.getElementById("progress-fill");
 const progressText = document.getElementById("progress-text");
 const warningText = document.getElementById("warning-text");
 const downloadLink = document.getElementById("download-link");
+const cancelBtn = document.getElementById("cancel-btn");
 const errorText = document.getElementById("error-text");
 
 const STATUS_LABELS = {
@@ -20,9 +21,13 @@ const STATUS_LABELS = {
   converting: "Convertendo formato…",
   done: "Concluído!",
   error: "Erro",
+  cancelled: "Cancelado",
 };
 
+const TERMINAL_STATUSES = ["done", "error", "cancelled"];
+
 let pollTimer = null;
+let currentJobId = null;
 
 function selectFile(file) {
   if (!file) return;
@@ -72,6 +77,7 @@ form.addEventListener("submit", async (e) => {
   statusSection.hidden = false;
   downloadLink.hidden = true;
   warningText.hidden = true;
+  cancelBtn.hidden = true;
   statusText.textContent = "Enviando arquivo…";
   progressFill.style.width = "0%";
   progressText.textContent = "";
@@ -87,10 +93,23 @@ form.addEventListener("submit", async (e) => {
       throw new Error(err.detail || "Falha ao enviar o arquivo.");
     }
     const job = await res.json();
+    currentJobId = job.id;
     pollJob(job.id);
   } catch (err) {
     showError(err.message);
     submitBtn.disabled = false;
+  }
+});
+
+cancelBtn.addEventListener("click", async () => {
+  if (!currentJobId) return;
+  cancelBtn.disabled = true;
+  try {
+    await fetch(`/api/jobs/${currentJobId}/cancel`, { method: "POST" });
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    cancelBtn.disabled = false;
   }
 });
 
@@ -103,9 +122,10 @@ function pollJob(jobId) {
       const job = await res.json();
       renderJob(job);
 
-      if (job.status === "done" || job.status === "error") {
+      if (TERMINAL_STATUSES.includes(job.status)) {
         clearInterval(pollTimer);
         submitBtn.disabled = false;
+        cancelBtn.hidden = true;
         if (job.status === "done") {
           downloadLink.href = `/api/jobs/${jobId}/download`;
           downloadLink.hidden = false;
@@ -115,12 +135,14 @@ function pollJob(jobId) {
       clearInterval(pollTimer);
       showError(err.message);
       submitBtn.disabled = false;
+      cancelBtn.hidden = true;
     }
   }, 2000);
 }
 
 function renderJob(job) {
   statusText.textContent = STATUS_LABELS[job.status] || job.status;
+  cancelBtn.hidden = TERMINAL_STATUSES.includes(job.status);
 
   if (job.progress_total > 0) {
     const pct = Math.round((job.progress_done / job.progress_total) * 100);
