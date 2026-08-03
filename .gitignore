@@ -11,3 +11,8 @@ data/jobs/*
 # Local tool/runtime state
 .claude/
 
+# Test/coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
