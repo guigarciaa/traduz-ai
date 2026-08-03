@@ -1,19 +1,17 @@
 # Limitações Conhecidas e Ideias de Evolução
 
-## Sem testes automatizados
+## Testes automatizados: cobrem lógica, não pixels
 
-O projeto inteiro foi validado manualmente: scripts ad-hoc + renderização de páginas como PNG +
-inspeção visual. Isso foi necessário porque os bugs do pipeline de PDF (ver
-[pdf-extraction.md](./pdf-extraction.md)) **não geram exceções** — produzem PDFs que abrem
-normalmente mas têm texto sobreposto, texto ausente, ou glifos errados. Um `pytest` que só checa
-"rodou sem erro" não pegaria nenhum dos 5 bugs documentados.
-
-**Se for adicionar testes**: o formato mais útil aqui não é unitário tradicional, é um teste de
-regressão visual — gerar um PDF de fixture pequeno e conhecido, rodar o pipeline com traduções
-determinísticas (fake, sem LLM), renderizar e comparar pixels (ou pelo menos extrair texto via
-`get_text()` e checar que todos os blocos esperados estão presentes, sem sobreposição de bbox).
-Os scripts usados durante o desenvolvimento (não versionados) seguiam esse padrão — vale
-recriá-los como testes de verdade.
+A suíte (`backend/tests/`, ver [testing.md](./testing.md)) tem 100% de cobertura de linha e
+testa diretamente cada um dos 5 bugs documentados em [pdf-extraction.md](./pdf-extraction.md)
+(sanitização de caracteres, fusão de fragmentos, limites de `max_y`, desenho único sem duplicar,
+perda de texto) via asserções sobre bbox/contagem de spans/conteúdo de texto extraído — não há
+comparação de pixels/imagem renderizada. Isso pega regressões de **lógica** (ex.: alguém reverte
+o fix do `insert_textbox` duplicado, ou afrouxa o limiar de merge de blocos) mas não pega
+regressões puramente **visuais** que não mudam a estrutura de texto/bbox (ex.: uma mudança na
+lib PyMuPDF que altere métricas de fonte sutilmente). Para esse tipo de regressão, validação
+visual manual (renderizar páginas como PNG e inspecionar) continua sendo o método mais confiável
+— é assim que os 5 bugs originais foram encontrados, nenhum deles gerava exceção.
 
 ## Performance da tradução local
 

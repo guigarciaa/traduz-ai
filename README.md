@@ -68,6 +68,26 @@ Abra `http://localhost:8899` no navegador, envie o arquivo, escolha o formato
 de saída (ou deixe "mesmo formato do original") e acompanhe o progresso na
 barra. Quando terminar, o link de download aparece na página.
 
+## Testes
+
+```bash
+cd backend
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+pytest
+```
+
+Suíte com 100% de cobertura (gate mínimo de 90% configurado em
+`backend/pyproject.toml`); não depende de um `llama-server` real rodando (o
+cliente HTTP é mockado). Ver [docs/testing.md](docs/testing.md) para a
+estratégia completa.
+
+## Documentação técnica
+
+Arquitetura, diagramas de fluxo e as decisões não-óbvias do pipeline de PDF
+estão em [docs/](docs/README.md) — vale ler antes de mexer no código,
+principalmente em `backend/app/extractors/pdf.py`.
+
 ## Limitações conhecidas
 
 - PDFs com layout complexo (colunas múltiplas, texto rotacionado, fontes
